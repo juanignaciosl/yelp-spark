@@ -18,4 +18,6 @@ package object yelp {
    * Example: 10:00.
    */
   type BusinessTime = String
+
+  type BusinessGrouping = (StateAbbr, City, PostalCode)
 }

@@ -22,9 +22,8 @@ object YelpBusinessesRunner extends YelpBusinesses with App {
     val outputDir = if (args.length > 1) args(1) else "/tmp"
     val groupedBusinesses = groupByStateCityAndPostalCode(filterOpen(readBusinesses(file)))
     val ps = Seq(.5, .95)
-    val openingHoursPercentiles = percentiles(groupedBusinesses, ps, _.openingHours)
-    openingHoursPercentiles.explain()
-    dump(openingHoursPercentiles, ps, s"$outputDir/opening")
+    dump(percentiles(groupedBusinesses, ps, _.openingHours), ps, s"$outputDir/opening")
+    dump(percentiles(groupedBusinesses, ps, _.closingHours), ps, s"$outputDir/closing")
   }
 
   /**
@@ -171,6 +170,16 @@ case class Business(id: BusinessId,
     hours.sunday.flatMap(openingHour)
   )
 
+  lazy val closingHours: WeekHours[BusinessTime] = WeekHours(
+    hours.monday.flatMap(closingHour),
+    hours.tuesday.flatMap(closingHour),
+    hours.wednesday.flatMap(closingHour),
+    hours.thursday.flatMap(closingHour),
+    hours.friday.flatMap(closingHour),
+    hours.saturday.flatMap(closingHour),
+    hours.sunday.flatMap(closingHour)
+  )
+
   private def clean(time: BusinessTime): Option[BusinessTime] = {
     time.split(':') match {
       // INFO: this is a simplistic approach to ease flatmapping with other Option monads
@@ -180,4 +189,5 @@ case class Business(id: BusinessId,
   }
 
   private def openingHour(h: BusinessSchedule) = clean(h.split('-')(0))
+  private def closingHour(h: BusinessSchedule) = clean(h.split('-')(1))
 }

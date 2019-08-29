@@ -27,6 +27,7 @@ trait YelpBusinesses {
 
   /**
    * Reads business with valid data (drops those without hours).
+   *
    * @param path Path to a business.json file
    * @return Dataset with the valid businesses
    */
@@ -53,8 +54,21 @@ trait YelpBusinesses {
   }
 }
 
+case class WeekHours(monday: Option[BusinessSchedule] = None,
+                     tuesday: Option[BusinessSchedule] = None,
+                     wednesday: Option[BusinessSchedule] = None,
+                     thursday: Option[BusinessSchedule] = None,
+                     friday: Option[BusinessSchedule] = None,
+                     saturday: Option[BusinessSchedule] = None,
+                     sunday: Option[BusinessSchedule] = None) {
+
+  def isEmpty: Boolean =
+    List(monday, tuesday, wednesday, thursday, friday, saturday, sunday).flatten.isEmpty
+}
+
 case class Business(id: BusinessId,
                     isOpen: Boolean,
                     postalCode: PostalCode,
                     city: City,
-                    stateAbbr: StateAbbr)
+                    stateAbbr: StateAbbr,
+                    hours: WeekHours)

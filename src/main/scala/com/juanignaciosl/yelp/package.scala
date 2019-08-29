@@ -9,5 +9,13 @@ package object yelp {
   type City = String
   type StateAbbr = String
 
+  /**
+   * Example: 10:00-21:00.
+   */
   type BusinessSchedule = String
+
+  /**
+   * Example: 10:00.
+   */
+  type BusinessTime = String
 }

@@ -45,7 +45,7 @@ trait YelpBusinesses {
 
   def filterOpen(businesses: Dataset[Business]): Dataset[Business] = businesses.filter(_.isOpen)
 
-  def groupByStateCityAndPostalCode(businesses: Dataset[Business]): KeyValueGroupedDataset[(String, String, String), Business] = {
+  def groupByStateCityAndPostalCode(businesses: Dataset[Business]): KeyValueGroupedDataset[(StateAbbr, City, PostalCode), Business] = {
     {
       import ss.implicits._
       businesses.groupByKey(b => (b.stateAbbr, b.city, b.postalCode))
@@ -53,8 +53,8 @@ trait YelpBusinesses {
   }
 }
 
-case class Business(id: String,
+case class Business(id: BusinessId,
                     isOpen: Boolean,
-                    postalCode: String,
-                    city: String,
-                    stateAbbr: String)
+                    postalCode: PostalCode,
+                    city: City,
+                    stateAbbr: StateAbbr)

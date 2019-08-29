@@ -1,7 +1,7 @@
 package com.juanignaciosl.yelp
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{Dataset, SparkSession}
+import org.apache.spark.sql.{Dataset, KeyValueGroupedDataset, SparkSession}
 
 object YelpBusinessesRunner extends YelpBusinesses with App {
   lazy val conf: SparkConf = new SparkConf()
@@ -15,18 +15,21 @@ object YelpBusinessesRunner extends YelpBusinesses with App {
 
   override def main(args: Array[String]): Unit = {
     val file = args(0)
-    import ss.implicits._
-    val businesses = readBusinesses(file)
-      .groupByKey(b => (b.stateAbbr, b.city, b.postalCode))
+    val groupedBusinesses = groupByStateCityAndPostalCode(filterOpen(readBusinesses(file)))
     import org.apache.spark.sql.functions.count
-    val businessCounts = businesses.agg(count("*"))
-    businessCounts.collect().foreach(println)
+    val businessCounts = groupedBusinesses.agg(count("*"))
+    businessCounts.explain()
   }
 }
 
 trait YelpBusinesses {
   val ss: SparkSession
 
+  /**
+   * Reads business with valid data (drops those without hours).
+   * @param path Path to a business.json file
+   * @return Dataset with the valid businesses
+   */
   def readBusinesses(path: String): Dataset[Business] = {
     import ss.implicits._
 
@@ -36,7 +39,17 @@ trait YelpBusinesses {
       .withColumnRenamed("is_open", "isOpen")
       .withColumnRenamed("postal_code", "postalCode")
       .withColumnRenamed("state", "stateAbbr")
+      .na.drop(Seq("hours"))
       .as[Business]
+  }
+
+  def filterOpen(businesses: Dataset[Business]): Dataset[Business] = businesses.filter(_.isOpen)
+
+  def groupByStateCityAndPostalCode(businesses: Dataset[Business]): KeyValueGroupedDataset[(String, String, String), Business] = {
+    {
+      import ss.implicits._
+      businesses.groupByKey(b => (b.stateAbbr, b.city, b.postalCode))
+    }
   }
 }
 

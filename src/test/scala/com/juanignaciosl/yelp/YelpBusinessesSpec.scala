@@ -56,6 +56,43 @@ class YelpBusinessesSpec extends FunSpec with Matchers with YelpBusinesses {
     }
   }
 
+  describe("countOpenByDay") {
+    it("should count open businesses by day") {
+      import ss.implicits._
+      def buildBusiness(mondayOpeningTime: String) = {
+        BusinessTemplate.copy(hours = WeekHours(monday = Some(mondayOpeningTime)))
+      }
+
+      val from09to20No = buildBusiness("9:00-20:00")
+      val from09to21No = buildBusiness("9:00-21:00")
+      val from09to22Yes = buildBusiness("9:00-22:00")
+      val from22to23YNo = buildBusiness("22:00-23:00")
+      val businesses = Seq(from09to20No, from09to21No, from09to22Yes, from22to23YNo)
+      val groupedBusinesses = groupByStateAndCity(sc.parallelize(businesses).toDS)
+
+      val openBusinessesCount = countOpenPastTime(groupedBusinesses, "21:00").collect().map(_._2)
+
+      openBusinessesCount shouldEqual Array((1L, 0L, 0L, 0L, 0L, 0L, 0L))
+    }
+    it("should count open businesses by day for businesses spanning to the next day") {
+      import ss.implicits._
+      def buildBusiness(mondayOpeningTime: String) = {
+        BusinessTemplate.copy(hours = WeekHours(monday = Some(mondayOpeningTime)))
+      }
+
+      val from09to20No = buildBusiness("9:00-20:00")
+      val from09to21No = buildBusiness("9:00-21:00")
+      val from09to01Yes = buildBusiness("9:00-1:00")
+      val from22to23YNo = buildBusiness("22:00-23:00")
+      val businesses = Seq(from09to20No, from09to21No, from09to01Yes, from22to23YNo)
+      val groupedBusinesses = groupByStateAndCity(sc.parallelize(businesses).toDS)
+
+      val openBusinessesCount = countOpenPastTime(groupedBusinesses, "21:00").collect().map(_._2)
+
+      openBusinessesCount shouldEqual Array((1L, 0L, 0L, 0L, 0L, 0L, 0L))
+    }
+  }
+
   describe("percentiles") {
     it("should compute .5 and .95 percentiles when there's only one matching business") {
       import ss.implicits._
@@ -117,6 +154,12 @@ class WeekHoursSpec extends FunSpec with Matchers {
       WeekHours(monday = Some("9:0-0:0")).isEmpty should be(false)
     }
   }
+
+  describe("isOpen") {
+    it("should return true if the schedule spans until the next day") {
+      WeekHours.isOpen("20:00", "10:0-1:0") shouldEqual true
+    }
+  }
 }
 
 class BusinessSpec extends FunSpec with Matchers {
@@ -152,10 +195,10 @@ class PercentileAggregatorSpec extends FunSpec with Matchers {
         WeekHours(tuesday = Some("10:00")),
       )
       val expected = Seq(
-        WeekHours(monday = Some("09:00"), tuesday = Some ("10:00")),
-        WeekHours(monday = Some("09:00"), tuesday = Some ("10:00"))
+        WeekHours(monday = Some("09:00"), tuesday = Some("10:00")),
+        WeekHours(monday = Some("09:00"), tuesday = Some("10:00"))
       )
-      aggregator.finish(reduction) shouldEqual (expected)
+      aggregator.finish(reduction) shouldEqual expected
     }
   }
 }

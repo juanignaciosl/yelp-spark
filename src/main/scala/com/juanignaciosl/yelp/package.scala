@@ -20,4 +20,8 @@ package object yelp {
   type BusinessTime = String
 
   type BusinessGrouping = (StateAbbr, City, PostalCode)
+
+  type BusinessCityGrouping = (StateAbbr, City)
+
+  type SevenLongs = (Long, Long, Long, Long, Long, Long, Long)
 }

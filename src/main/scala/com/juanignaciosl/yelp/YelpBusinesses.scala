@@ -20,21 +20,24 @@ object YelpBusinessesRunner extends YelpBusinesses with App {
   override def main(args: Array[String]): Unit = {
     val file = args(0)
     val outputDir = if (args.length > 1) args(1) else "/tmp"
-    val groupedBusinesses = groupByStateCityAndPostalCode(filterOpen(readBusinesses(file)))
+    val openBusinesses = filterOpen(readBusinesses(file)).persist()
+    val groupedBusinesses = groupByStateCityAndPostalCode(openBusinesses)
     val ps = Seq(.5, .95)
     dump(percentiles(groupedBusinesses, ps, _.openingHours), ps, s"$outputDir/opening")
     dump(percentiles(groupedBusinesses, ps, _.closingHours), ps, s"$outputDir/closing")
+
+    dump(countOpenPastTime(groupByStateAndCity(openBusinesses), "21:00"), s"$outputDir/openpast-2100.csv")
   }
 
   /**
    *
    * @param percentilesByGroup Percentile computation
-   * @param ps Percentiles corresponding to the generation
-   * @param filePathPrefix CSV files will be created for each percentile
+   * @param ps                 Percentiles corresponding to the generation
+   * @param filePathPrefix     CSV files will be created for each percentile
    */
   def dump(percentilesByGroup: Dataset[(BusinessGrouping, Seq[WeekHours[BusinessTime]])],
            ps: Seq[Double],
-           filePathPrefix: String) = {
+           filePathPrefix: String): Unit = {
     val files = ps.map { p => new BufferedWriter(new FileWriter(new File(s"$filePathPrefix-$p.csv"))) }
     try {
       files.foreach(_.write("state,city,postal_code,monday,tuesday,wednesday,thursday,friday,saturday,sunday\n"))
@@ -49,6 +52,19 @@ object YelpBusinessesRunner extends YelpBusinesses with App {
       }
     } finally {
       files.map(_.close())
+    }
+  }
+
+  def dump(informationByStateAndCity: Dataset[(BusinessCityGrouping, SevenLongs)],
+           filePath: String): Unit = {
+    val file = new BufferedWriter(new FileWriter(new File(filePath)))
+    try {
+      file.write("state,city,monday,tuesday,wednesday,thursday,friday,saturday,sunday\n")
+      informationByStateAndCity.collect().foreach {
+        case ((state, city), (m, t, w, th, f, sa, su)) => file.write(s"$state,$city,$m,$t,$w,$th,$f,$sa,$su\n")
+      }
+    } finally {
+      file.close()
     }
   }
 }
@@ -95,6 +111,27 @@ class PercentileAggregator(f: Business => WeekHours[BusinessTime], ps: Seq[Doubl
   override def outputEncoder: Encoder[Seq[WeekHours[BusinessTime]]] = Encoders.kryo
 }
 
+class CountOpenPastTimeAggregator(time: BusinessTime) extends Aggregator[Business, SevenLongs, SevenLongs] {
+  override def zero: SevenLongs = (0L, 0L, 0L, 0L, 0L, 0L, 0L)
+
+  override def reduce(c1: SevenLongs, b: Business): SevenLongs = {
+    val c2 = b.hours.days.map(d => d.map(WeekHours.isOpen(time, _))).map(open => if (open.getOrElse(false)) 1L else 0L) match {
+      case m :: t :: w :: th :: f :: s :: su :: Nil => (m, t, w, th, f, s, su)
+      case _ => throw new Exception(s"Error processing open day count for business ${b.id}")
+    }
+    merge(c1, c2)
+  }
+
+  override def merge(c1: SevenLongs, c2: SevenLongs): SevenLongs =
+    (c1._1 + c2._1, c1._2 + c2._2, c1._3 + c2._3, c1._4 + c2._4, c1._5 + c2._5, c1._6 + c2._6, c1._7 + c2._7)
+
+  override def finish(reduction: SevenLongs): SevenLongs = reduction
+
+  override def bufferEncoder: Encoder[SevenLongs] = Encoders.kryo
+
+  override def outputEncoder: Encoder[SevenLongs] = Encoders.kryo
+}
+
 trait YelpBusinesses {
   val ss: SparkSession
 
@@ -126,12 +163,25 @@ trait YelpBusinesses {
     }
   }
 
+  def groupByStateAndCity(businesses: Dataset[Business]): KeyValueGroupedDataset[BusinessCityGrouping, Business] = {
+    {
+      import ss.implicits._
+      businesses.groupByKey(b => (b.stateAbbr, b.city))
+    }
+  }
+
   def percentiles(businesses: KeyValueGroupedDataset[BusinessGrouping, Business],
                   ps: Seq[Double],
                   f: Business => WeekHours[BusinessTime]): Dataset[(BusinessGrouping, Seq[WeekHours[BusinessTime]])] = {
     val aggregator = new PercentileAggregator(f, ps).toColumn
-    implicit val weekHoursEncoder: Encoder[Seq[WeekHours[BusinessTime]]] = Encoders.kryo //Encoders.product[WeekHours[BusinessTime]]
+    implicit val weekHoursEncoder: Encoder[Seq[WeekHours[BusinessTime]]] = Encoders.kryo
     businesses.agg(aggregator.as[Seq[WeekHours[BusinessTime]]])
+  }
+
+  def countOpenPastTime[K](businesses: KeyValueGroupedDataset[K, Business], time: BusinessTime): Dataset[(K, SevenLongs)] = {
+    val aggregator = new CountOpenPastTimeAggregator(time).toColumn
+    implicit val sevenLongsEncoder: Encoder[SevenLongs] = Encoders.kryo
+    businesses.agg(aggregator.as[SevenLongs])
   }
 }
 
@@ -139,16 +189,32 @@ trait YelpBusinesses {
 // a case class instead of a Map to parse the json object, so I kept it and leveraged the extra
 // typing benefits, such as ensuring days.
 // PS: I've regretted this decision, especially because of the tedious Aggregator :_)
-case class WeekHours[T](monday: Option[T] = None,
-                        tuesday: Option[T] = None,
-                        wednesday: Option[T] = None,
-                        thursday: Option[T] = None,
-                        friday: Option[T] = None,
-                        saturday: Option[T] = None,
-                        sunday: Option[T] = None) {
+case class WeekHours[T <: String](monday: Option[T] = None,
+                                  tuesday: Option[T] = None,
+                                  wednesday: Option[T] = None,
+                                  thursday: Option[T] = None,
+                                  friday: Option[T] = None,
+                                  saturday: Option[T] = None,
+                                  sunday: Option[T] = None) {
+  val days = List(monday, tuesday, wednesday, thursday, friday, saturday, sunday)
 
-  def isEmpty: Boolean =
-    List(monday, tuesday, wednesday, thursday, friday, saturday, sunday).flatten.isEmpty
+  val isEmpty: Boolean = days.flatten.isEmpty
+}
+
+object WeekHours {
+  def isOpen(time: BusinessTime, day: BusinessSchedule): Boolean = {
+    import Business.toHHMM
+    toHHMM(time).exists(cleanedTime =>
+      day.split('-') match {
+        case Array(open, close) => (toHHMM(open), toHHMM(close)) match {
+          // If closing time is before open time it must be because it spans to the next day
+          case (Some(o), Some(c)) => o <= cleanedTime && (c > cleanedTime || c < o)
+          case _ => false
+        }
+        case _ => false
+      })
+  }
+
 }
 
 case class Business(id: BusinessId,
@@ -180,7 +246,16 @@ case class Business(id: BusinessId,
     hours.sunday.flatMap(closingHour)
   )
 
-  private def clean(time: BusinessTime): Option[BusinessTime] = {
+  import Business.toHHMM
+
+  private def openingHour(h: BusinessSchedule) = toHHMM(h.split('-')(0))
+
+  private def closingHour(h: BusinessSchedule) = toHHMM(h.split('-')(1))
+}
+
+object Business {
+
+  def toHHMM(time: BusinessTime): Option[BusinessTime] = {
     time.split(':') match {
       // INFO: this is a simplistic approach to ease flatmapping with other Option monads
       case Array(hh, mm) => Some(f"${hh.toInt}%02d:${mm.toInt}%02d")
@@ -188,6 +263,4 @@ case class Business(id: BusinessId,
     }
   }
 
-  private def openingHour(h: BusinessSchedule) = clean(h.split('-')(0))
-  private def closingHour(h: BusinessSchedule) = clean(h.split('-')(1))
 }

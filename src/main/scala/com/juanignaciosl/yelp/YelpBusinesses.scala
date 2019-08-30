@@ -1,6 +1,6 @@
 package com.juanignaciosl.yelp
 
-import java.io.{BufferedWriter, File, FileWriter}
+import java.io.{BufferedWriter, File, FileWriter, Writer}
 
 import com.juanignaciosl.utils.MathUtils
 import org.apache.spark.SparkConf
@@ -18,15 +18,20 @@ object YelpBusinessesRunner extends YelpBusinesses with App {
       .getOrCreate()
 
   override def main(args: Array[String]): Unit = {
-    val file = args(0)
+    val inputDir = args(0)
     val outputDir = if (args.length > 1) args(1) else "/tmp"
-    val openBusinesses = filterOpen(readBusinesses(file)).persist()
+    val openBusinesses = filterOpen(readBusinesses(s"$inputDir/business.json")).persist()
     val groupedBusinesses = groupByStateCityAndPostalCode(openBusinesses)
     val ps = Seq(.5, .95)
     dump(percentiles(groupedBusinesses, ps, _.openingHours), ps, s"$outputDir/opening")
     dump(percentiles(groupedBusinesses, ps, _.closingHours), ps, s"$outputDir/closing")
 
     dump(countOpenPastTime(groupByStateAndCity(openBusinesses), "21:00"), s"$outputDir/openpast-2100.csv")
+
+    val coolestBusinessesByPostalCode = getCoolestBusiness(
+      openBusinesses.filter(_.hours.sunday.isEmpty),
+      readReviews(s"$inputDir/review.json"))
+    dumpCount(coolestBusinessesByPostalCode, s"$outputDir/coolestBusinessNotOpenOnSunday.csv")
   }
 
   /**
@@ -57,12 +62,27 @@ object YelpBusinessesRunner extends YelpBusinesses with App {
 
   def dump(informationByStateAndCity: Dataset[(BusinessCityGrouping, SevenLongs)],
            filePath: String): Unit = {
-    val file = new BufferedWriter(new FileWriter(new File(filePath)))
-    try {
+    copyToWriter(filePath, { file =>
       file.write("state,city,monday,tuesday,wednesday,thursday,friday,saturday,sunday\n")
       informationByStateAndCity.collect().foreach {
         case ((state, city), (m, t, w, th, f, sa, su)) => file.write(s"$state,$city,$m,$t,$w,$th,$f,$sa,$su\n")
       }
+    })
+  }
+
+  def dumpCount(businessWithCount: Dataset[(BusinessGrouping, (BusinessId, CoolnessCount))], filePath: String): Unit = {
+    copyToWriter(filePath, { file =>
+      file.write("state,city,monday,business_id,cool_count\n")
+      businessWithCount.collect().foreach {
+        case ((state, city, postalCode), (businessId, count)) => file.write(s"$state,$city,$postalCode,$businessId,$count\n")
+      }
+    })
+  }
+
+  private def copyToWriter(filePath: String, f: Writer => Unit): Unit = {
+    val file = new BufferedWriter(new FileWriter(new File(filePath)))
+    try {
+      f(file)
     } finally {
       file.close()
     }
@@ -132,6 +152,23 @@ class CountOpenPastTimeAggregator(time: BusinessTime) extends Aggregator[Busines
   override def outputEncoder: Encoder[SevenLongs] = Encoders.kryo
 }
 
+class CoolestBusinessAggregator() extends Aggregator[(BusinessId, CoolnessCount), (BusinessId, CoolnessCount), (BusinessId, CoolnessCount)] {
+  override def zero: (BusinessId, CoolnessCount) = ("", 0)
+
+  override def reduce(b: (BusinessId, CoolnessCount), a: (BusinessId, CoolnessCount)): (BusinessId, CoolnessCount) = {
+    if(a._1 == b._1) (a._1, a._2 + b._2)
+    else if (b._2 > a._2) b else a
+  }
+
+  override def merge(b1: (BusinessId, CoolnessCount), b2: (BusinessId, CoolnessCount)): (BusinessId, CoolnessCount) = reduce(b1, b2)
+
+  override def finish(reduction: (BusinessId, CoolnessCount)): (BusinessId, CoolnessCount) = reduction
+
+  override def bufferEncoder: Encoder[(BusinessId, CoolnessCount)] = Encoders.tuple(Encoders.STRING, Encoders.scalaLong)
+
+  override def outputEncoder: Encoder[(BusinessId, CoolnessCount)] = Encoders.tuple(Encoders.STRING, Encoders.scalaLong)
+}
+
 trait YelpBusinesses {
   val ss: SparkSession
 
@@ -152,6 +189,15 @@ trait YelpBusinesses {
       .withColumnRenamed("state", "stateAbbr")
       .na.drop(Seq("hours"))
       .as[Business]
+  }
+
+  def readReviews(path: String): Dataset[Review] = {
+    import ss.implicits._
+    ss.read
+      .json(path)
+      .withColumnRenamed("review_id", "id")
+      .withColumnRenamed("business_id", "businessId")
+      .as[Review]
   }
 
   def filterOpen(businesses: Dataset[Business]): Dataset[Business] = businesses.filter(_.isOpen)
@@ -182,6 +228,26 @@ trait YelpBusinesses {
     val aggregator = new CountOpenPastTimeAggregator(time).toColumn
     implicit val sevenLongsEncoder: Encoder[SevenLongs] = Encoders.kryo
     businesses.agg(aggregator.as[SevenLongs])
+  }
+
+  def getCoolestBusiness(businesses: Dataset[Business], reviews: Dataset[Review]): Dataset[(BusinessGrouping, (BusinessId, CoolnessCount))] = {
+    import ss.implicits._
+    import org.apache.spark.sql.functions.sum
+    val businessesIdsCoolness = reviews
+      .filter(_.cool > 0)
+      .groupByKey(_.businessId)
+      .agg(sum("cool").as[CoolnessCount])
+
+    val businessesWithCoolness = businesses
+      .joinWith(businessesIdsCoolness, businesses.col("id") === businessesIdsCoolness.col("value"))
+      .map {
+        case (b, bWithCoolness) => (b, bWithCoolness._2)
+      }
+    val groupedIds = businessesWithCoolness
+      .groupByKey(x => (x._1.stateAbbr, x._1.city, x._1.postalCode))
+      .mapValues(bc => (bc._1.id, bc._2))
+
+    groupedIds.agg(new CoolestBusinessAggregator().toColumn.as[(BusinessId, CoolnessCount)])
   }
 }
 
@@ -264,3 +330,5 @@ object Business {
   }
 
 }
+
+case class Review(id: ReviewId, businessId: BusinessId, cool: CoolnessCount)

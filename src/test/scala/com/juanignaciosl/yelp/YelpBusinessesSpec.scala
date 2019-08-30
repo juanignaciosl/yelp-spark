@@ -22,7 +22,7 @@ class YelpBusinessesSpec extends FunSpec with Matchers with YelpBusinesses {
   describe("readBusinesses") {
     it("should parse business json files into Business case class") {
       import ss.implicits._
-      val ds = readBusinesses(FileUtils.resourcePath("business.head.json")).as[Business]
+      val ds = readBusinesses(FileUtils.resourcePath("business.head.json"))
       ds.count() shouldEqual 8
       val knownId = "gbQN7vr_caG_A1ugSmGhWg"
       ds.map(_.id).collect should contain(knownId)
@@ -35,6 +35,16 @@ class YelpBusinessesSpec extends FunSpec with Matchers with YelpBusinesses {
     }
   }
 
+  describe("readReviews") {
+    it("should parse review json files into Review case class") {
+      import ss.implicits._
+      val ds = readReviews(FileUtils.resourcePath("review.head.json")).as[Review]
+      ds.count() shouldEqual 10
+      val knownId = "8e9HxxLjjqc9ez5ezzN7iQ"
+      ds.map(_.id).collect should contain(knownId)
+    }
+  }
+
   def BusinessTemplate = Business(
     Random.nextString(4),
     isOpen = true,
@@ -42,6 +52,12 @@ class YelpBusinessesSpec extends FunSpec with Matchers with YelpBusinesses {
     "My City",
     "My State",
     WeekHours(monday = Some("9:0-0:0"))
+  )
+
+  def CoolReviewTemplate = Review(
+    Random.nextString(4),
+    Random.nextString(4),
+    cool = 1
   )
 
   describe("filterOpen") {
@@ -126,6 +142,46 @@ class YelpBusinessesSpec extends FunSpec with Matchers with YelpBusinesses {
       val result = percentiles(ds, Seq(.5, .95), _.openingHours).collect()(0)._2
       result shouldEqual expected
     }
+  }
+
+  describe("getCoolestBusiness") {
+    // 4 groups with businesses (3, 2, 1, 1)
+    val b111a = BusinessTemplate.copy(id="111a", stateAbbr = "s1", city = "c1", postalCode = "pc1")
+    val b111b = BusinessTemplate.copy(id="111b", stateAbbr = "s1", city = "c1", postalCode = "pc1")
+    val b111c = BusinessTemplate.copy(id="111c", stateAbbr = "s1", city = "c1", postalCode = "pc1")
+
+    val b112a = BusinessTemplate.copy(id="112a", stateAbbr = "s1", city = "c1", postalCode = "pc2")
+    val b112b = BusinessTemplate.copy(id="112b", stateAbbr = "s1", city = "c1", postalCode = "pc2")
+
+    val b113a = BusinessTemplate.copy(id="113a", stateAbbr = "s1", city = "c1", postalCode = "pc3")
+
+    val b114a = BusinessTemplate.copy(id="114a", stateAbbr = "s1", city = "c1", postalCode = "pc4")
+
+    // In groups 1 and 2 the 2nd will win, in 3 the first one, in 4, none
+    val r1b111a = CoolReviewTemplate.copy(businessId = b111a.id)
+    val r1b111b = CoolReviewTemplate.copy(businessId = b111b.id)
+    val r2b111b = CoolReviewTemplate.copy(businessId = b111b.id)
+
+    val r1b112b = CoolReviewTemplate.copy(businessId = b112b.id)
+
+    val r1b113a = CoolReviewTemplate.copy(businessId = b113a.id)
+
+    import ss.implicits._
+    val businesses = sc.parallelize(Seq(
+      b111a, b111b, b111c, b112a, b112b, b113a, b114a
+    )).toDS
+
+    val reviews = sc.parallelize(Seq(
+      r1b111a, r1b111b, r2b111b, r1b112b, r1b113a
+    )).toDS
+
+    val result = getCoolestBusiness(businesses, reviews)
+    val values = result.collect().map {
+      case (_, (b: BusinessId, coolness: Long)) => (b, coolness)
+    }.sortBy(_._1)
+
+    val expected = Array((b111b.id, 2L), (b112b.id, 1L), (b113a.id, 1L)).sortBy(_._1)
+    values shouldEqual expected
   }
 }
 

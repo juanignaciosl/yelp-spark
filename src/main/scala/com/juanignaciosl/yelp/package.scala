@@ -24,4 +24,8 @@ package object yelp {
   type BusinessCityGrouping = (StateAbbr, City)
 
   type SevenLongs = (Long, Long, Long, Long, Long, Long, Long)
+
+  type ReviewId = String
+
+  type CoolnessCount = Long
 }

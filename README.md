@@ -2,6 +2,8 @@
 
 This is a playground for me to fiddle with Spark.
 
+It uses [a Yelp sample dataset](https://www.yelp.com/dataset/) ([documentation](https://www.yelp.com/dataset/documentation/main)).
+
 ## Roadmap
 
 - [X] Happy path of an analysis of open businesses, median and p95 opening and closing times.

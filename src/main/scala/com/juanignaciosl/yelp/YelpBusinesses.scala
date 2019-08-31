@@ -7,19 +7,31 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.expressions.Aggregator
 import org.apache.spark.sql.{Dataset, Encoder, Encoders, KeyValueGroupedDataset, SparkSession}
 
-object YelpBusinessesRunner extends YelpBusinesses with App {
+object YelpBusinessesLocalRunner extends App with YelpDataProcessor {
+  override def main(args: Array[String]): Unit = super.main(args)
+
+  lazy val conf: SparkConf = new SparkConf().setMaster("local[4]")
+}
+
+object YelpBusinessesRunner extends App with YelpDataProcessor {
+  override def main(args: Array[String]): Unit = super.main(args)
+
   lazy val conf: SparkConf = new SparkConf()
-    .setMaster("local[4]")
-    .setAppName("Yelp Spark")
+}
+
+trait YelpDataProcessor extends YelpBusinesses {
+  val conf: SparkConf
+
   lazy val ss: SparkSession =
     SparkSession
       .builder()
-      .config(conf)
+      .config(conf.setAppName("Yelp Spark"))
       .getOrCreate()
 
-  override def main(args: Array[String]): Unit = {
+  def main(args: Array[String]): Unit = {
     val inputDir = args(0)
     val outputDir = if (args.length > 1) args(1) else "/tmp"
+
     val openBusinesses = filterOpen(readBusinesses(s"$inputDir/business.json")).persist()
     val groupedBusinesses = groupByStateCityAndPostalCode(openBusinesses)
     val ps = Seq(.5, .95)
@@ -156,7 +168,7 @@ class CoolestBusinessAggregator() extends Aggregator[(BusinessId, CoolnessCount)
   override def zero: (BusinessId, CoolnessCount) = ("", 0)
 
   override def reduce(b: (BusinessId, CoolnessCount), a: (BusinessId, CoolnessCount)): (BusinessId, CoolnessCount) = {
-    if(a._1 == b._1) (a._1, a._2 + b._2)
+    if (a._1 == b._1) (a._1, a._2 + b._2)
     else if (b._2 > a._2) b else a
   }
 

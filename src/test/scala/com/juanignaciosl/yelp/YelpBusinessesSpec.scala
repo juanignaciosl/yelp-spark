@@ -7,7 +7,7 @@ import com.juanignaciosl.utils.{FileUtils, MathUtils}
 
 import scala.util.Random
 
-class YelpBusinessesSpec extends FunSpec with Matchers with YelpBusinesses {
+class YelpBusinessesSpec extends FunSpec with Matchers with YelpBusinesses with BeforeAndAfterAll {
 
   lazy val conf: SparkConf = new SparkConf()
     .setMaster("local")
@@ -18,6 +18,11 @@ class YelpBusinessesSpec extends FunSpec with Matchers with YelpBusinesses {
       .config(conf)
       .getOrCreate()
   lazy val sc = ss.sparkContext
+
+  override protected def afterAll(): Unit = {
+    super.afterAll()
+    ss.stop()
+  }
 
   describe("readBusinesses") {
     it("should parse business json files into Business case class") {
@@ -248,7 +253,7 @@ class PercentileAggregatorSpec extends FunSpec with Matchers {
       val aggregator = new PercentileAggregator(_.openingHours, Seq(.5, .95))
       val reduction = Vector(
         WeekHours(monday = Some("09:00")),
-        WeekHours(tuesday = Some("10:00")),
+        WeekHours(tuesday = Some("10:00"))
       )
       val expected = Seq(
         WeekHours(monday = Some("09:00"), tuesday = Some("10:00")),

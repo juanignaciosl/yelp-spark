@@ -16,6 +16,8 @@ It uses [a Yelp sample dataset](https://www.yelp.com/dataset/) ([documentation](
 - [ ] Better output formats:
   - [ ] SQLite for better typing and interoperability.
   - [ ] Parquet or Avro for performance.
+- Pending fixes:
+  - [ ] Handle "coolness ties" in a deterministic way.
 - [ ] Refactors
     - [ ] Can we take advantage of first grouping by state and city, and then by postal code?
     - [ ] Split code into different files.
